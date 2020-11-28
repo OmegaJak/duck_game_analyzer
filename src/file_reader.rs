@@ -1,8 +1,11 @@
-use std::{error::Error, fs, path::Path};
+use std::{error::Error, collections::HashMap, fs, path::Path};
 use chrono::NaiveDateTime;
 use fs::DirEntry;
 use imgref::{Img, ImgRef, ImgVec};
 use lodepng::{Image, RGB};
+
+const WHITE: RGB<u8> = RGB { r: 255, g: 255, b: 255 };
+const BLACK: RGB<u8> = RGB { r: 0, g: 0, b: 0 };
 
 pub fn get_album_files(folder_path: &str) -> Result<Vec<DirEntry>, Box<dyn Error>> {
     let album_folder = Path::new(folder_path);
@@ -95,7 +98,38 @@ impl ScorePlacard<'_> {
     
         let white = RGB { r: 255_u8, g: 255_u8, b: 255_u8 };
         //println!("{:#?}", unique_colors);
-        unique_colors.len() == 2 || (unique_colors.len() == 3 && unique_colors.iter().any(|pix| pix == &white))
+        unique_colors.len() == 2 || (unique_colors.len() == 3 && unique_colors.iter().any(|pix| pix == &WHITE))
+    }
+}
+
+fn get_border_pixel_color_count(image: ImgRef<RGB<u8>>) -> HashMap<RGB<u8>, usize> {
+    let mut border_pixels = Vec::new();
+    for &row_index in [0, image.height() - 1].iter() {
+        for top_row_pixel in &image[row_index] {
+            border_pixels.push(top_row_pixel);
+        }
+    }
+
+    for &x in [0, image.width() - 1].iter() {
+        for y in 1..image.height() {
+            let pixel = &image[(x, y)];
+            border_pixels.push(pixel);
+        }
+    }
+
+    println!("Border count: {}", border_pixels.len());
+    get_color_counts(border_pixels)
+}
+
+fn get_color_counts<'a, I>(pixels: I) -> HashMap<RGB<u8>, usize>
+    where I: IntoIterator<Item = &'a RGB<u8>>
+{
+    let mut all_colors = HashMap::new();
+    for &pixel in pixels {
+        *all_colors.entry(pixel).or_insert(0) += 1;
+    }
+
+    all_colors
     }
 }
 
@@ -134,6 +168,25 @@ mod tests {
             let podium_image = get_image(filename);
             assert_eq!(*expected_count, podium_image.get_player_count(), "{}", filename);
         }
+    }
+    
+    #[test]
+    fn can_get_border_pixel_color_count() {
+        let mut image = Img::new(vec![BLACK; 1000], 100, 10);
+        let count_map = get_border_pixel_color_count(image.as_ref());
+        assert_eq!(1, count_map.len());
+
+        let different_black_instance = RGB { r: 0, g: 0, b: 0 };
+        assert_eq!(true, count_map.contains_key(&different_black_instance));
+        assert_eq!(218, *count_map.get(&BLACK).unwrap());
+
+        image[(99_usize, 0_usize)] = WHITE;
+        image[(0_usize, 5_usize)] = RGB { r: 255, g: 255, b: 255 };
+
+        let count_map = get_border_pixel_color_count(image.as_ref());
+        assert_eq!(2, count_map.len());
+        assert_eq!(216, *count_map.get(&BLACK).unwrap());
+        assert_eq!(2, *count_map.get(&WHITE).unwrap());
     }
     
     fn get_image(filename_date: &str) -> FullPodiumImage {
