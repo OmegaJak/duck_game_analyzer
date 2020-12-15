@@ -35,6 +35,13 @@ fn get_filename_without_extension(dir_entry: &fs::DirEntry) -> Option<String> {
     Some(String::from(filename))
 }
 
+#[derive(Copy, Clone, PartialEq, Debug)]
+enum AnalyzedBannerPixel {
+    Invalid,
+    White,
+    Black
+}
+
 struct FullPodiumImage {
     filepath: String,
     image: ImgVec<RGB<u8>>
@@ -46,6 +53,10 @@ struct ScorePlacard<'a> {
 
 struct VictorBanner<'a> {
     image: ImgRef<'a, RGB<u8>>
+}
+
+struct AnalyzedVictorBanner {
+    image: ImgVec<AnalyzedBannerPixel>
 }
 
 impl FullPodiumImage {
@@ -90,7 +101,7 @@ impl FullPodiumImage {
         ScorePlacard::is_score_placard(self.image.sub_image(left, top, placard_width, placard_height))
     }
 
-    pub fn get_victor_banner_top_and_left() -> (usize, usize) {
+    pub fn get_victor_banner_top_left_position() -> (usize, usize) {
         (72, 35)
     }
 }
@@ -148,7 +159,7 @@ impl<'a> VictorBanner<'a> {
     pub const WIDTH: usize = 179;
 
     pub fn from(podium_image: &'a FullPodiumImage) -> Self {
-        let (top_left_x, top_left_y) = FullPodiumImage::get_victor_banner_top_and_left();
+        let (top_left_x, top_left_y) = FullPodiumImage::get_victor_banner_top_left_position();
         VictorBanner { image: podium_image.image.sub_image(top_left_x, top_left_y, VictorBanner::WIDTH, VictorBanner::HEIGHT) }
     }
 
@@ -161,6 +172,56 @@ impl<'a> VictorBanner<'a> {
 
     fn determine_black_color(&self) -> RGB<u8> {
         get_darkest_color(self.image)
+    }
+}
+
+impl AnalyzedVictorBanner {
+    pub fn from(victor_banner: VictorBanner) -> Self {
+        let width = victor_banner.image.width();
+        let height = victor_banner.image.height();
+        let banner_white = victor_banner.determine_white_color();
+        let banner_black = victor_banner.determine_black_color();
+
+        let analyzed_pixels: Vec<AnalyzedBannerPixel> = vec![AnalyzedBannerPixel::Invalid; width * height];
+        let mut analyzed_image = Img::new(analyzed_pixels, width, height);
+        for x in 0..width {
+            for y in 0..height {
+                let analyzed_pixel = Self::analyze_pixel(victor_banner.image, x, y, banner_white, banner_black);
+                analyzed_image[(x, y)] = analyzed_pixel;
+            }
+        }
+
+        AnalyzedVictorBanner { image: analyzed_image }
+    }
+
+    pub fn analyze_pixel(image: ImgRef<RGB<u8>>, x: usize, y: usize, banner_white: RGB<u8>, banner_black: RGB<u8>) -> AnalyzedBannerPixel {
+        let original_pixel = image[(x, y)];
+        if original_pixel == banner_white && Self::is_pixel_surrounded_by_black_and_white(image, x, y, banner_white, banner_black) {
+            AnalyzedBannerPixel::White
+        } else if original_pixel == banner_black && Self::is_pixel_surrounded_by_black_and_white(image, x, y, banner_white, banner_black)  {
+            AnalyzedBannerPixel::Black
+        } else {
+            AnalyzedBannerPixel::Invalid
+        }
+    }
+
+    fn is_pixel_surrounded_by_black_and_white(image: ImgRef<RGB<u8>>, pixel_x: usize, pixel_y: usize, white: RGB<u8>, black: RGB<u8>) -> bool{
+        let pixel_x = pixel_x as isize;
+        let pixel_y = pixel_y as isize;
+
+        Self::is_pixel_black_or_white(image, pixel_x - 1, pixel_y, white, black)
+        && Self::is_pixel_black_or_white(image, pixel_x + 1, pixel_y, white, black)
+        && Self::is_pixel_black_or_white(image, pixel_x, pixel_y - 1, white, black)
+        && Self::is_pixel_black_or_white(image, pixel_x, pixel_y + 1, white, black)
+    }
+
+    fn is_pixel_black_or_white(image: ImgRef<RGB<u8>>, x: isize, y: isize, white: RGB<u8>, black: RGB<u8>) -> bool {
+        if x < 0 || x == (image.width() as isize) - 1 || y < 0 || y == (image.height() as isize) - 1 {
+            return true;
+        }
+
+        let pixel = image[(x as usize, y as usize)];
+        pixel == white || pixel == black
     }
 }
 
@@ -232,6 +293,23 @@ mod tests {
         assert_expected_black_color("04-09-17 0;18", RGB { r: 10, g: 3, b: 17 });
         assert_expected_black_color("04-12-17 23;58", BLACK);
         assert_expected_black_color("04-12-19 22;29", RGB { r: 0, g: 0, b: 6 });
+    }
+
+    #[test]
+    fn can_analyze_pixel() {
+        let image = get_image("04-25-20 21;01");
+        let banner_white = RGB { r: 232, g: 232, b: 232 };
+        let banner_black = BLACK;
+
+        let analyze_at = |x: usize, y: usize| AnalyzedVictorBanner::analyze_pixel(image.image.as_ref(), x, y, banner_white, banner_black);
+
+        assert_eq!(AnalyzedBannerPixel::Invalid, analyze_at(141, 47));
+        assert_eq!(AnalyzedBannerPixel::Invalid, analyze_at(140, 47));
+        assert_eq!(AnalyzedBannerPixel::Black, analyze_at(139, 47));
+        assert_eq!(AnalyzedBannerPixel::White, analyze_at(137, 42));
+        assert_eq!(AnalyzedBannerPixel::Invalid, analyze_at(138, 39));
+        assert_eq!(AnalyzedBannerPixel::Invalid, analyze_at(138, 35));
+        // assert_eq!(AnalyzedBannerPixel::Invalid, analyze_at(139, 35)); //?????
     }
 
     fn assert_expected_white_color(filename: &str, expected_white: RGB<u8>) {
