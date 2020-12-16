@@ -1,7 +1,11 @@
+#[path = "iter_ext.rs"]
+mod iter_ext;
+
 use std::{error::Error, collections::HashMap, fs, path::Path};
 use chrono::NaiveDateTime;
 use fs::DirEntry;
 use imgref::{Img, ImgRef, ImgVec};
+use iter_ext::IterExt;
 use lodepng::{Image, RGB};
 
 const WHITE: RGB<u8> = RGB { r: 255, g: 255, b: 255 };
@@ -140,7 +144,7 @@ fn get_border_pixel_color_count(image: ImgRef<RGB<u8>>) -> HashMap<RGB<u8>, usiz
 }
 
 fn get_darkest_color(image: ImgRef<RGB<u8>>) -> RGB<u8> {
-    image.pixels().min_by_key(|px| px.r + px.g + px.b).unwrap()
+    image.pixels().min_by_key(|px| px.r as usize + px.g as usize + px.b as usize).unwrap()
 }
 
 fn get_color_counts<'a, I>(pixels: I) -> HashMap<RGB<u8>, usize>
@@ -176,7 +180,7 @@ impl<'a> VictorBanner<'a> {
 }
 
 impl AnalyzedVictorBanner {
-    pub fn from(victor_banner: VictorBanner) -> Self {
+    pub fn from(victor_banner: &VictorBanner) -> Self {
         let width = victor_banner.image.width();
         let height = victor_banner.image.height();
         let banner_white = victor_banner.determine_white_color();
@@ -216,7 +220,7 @@ impl AnalyzedVictorBanner {
     }
 
     fn is_pixel_black_or_white(image: ImgRef<RGB<u8>>, x: isize, y: isize, white: RGB<u8>, black: RGB<u8>) -> bool {
-        if x < 0 || x == (image.width() as isize) - 1 || y < 0 || y == (image.height() as isize) - 1 {
+        if x < 0 || x > (image.width() as isize) - 1 || y < 0 || y > (image.height() as isize) - 1 {
             return true;
         }
 
@@ -310,6 +314,19 @@ mod tests {
         assert_eq!(AnalyzedBannerPixel::Invalid, analyze_at(138, 39));
         assert_eq!(AnalyzedBannerPixel::Invalid, analyze_at(138, 35));
         // assert_eq!(AnalyzedBannerPixel::Invalid, analyze_at(139, 35)); //?????
+    }
+
+    #[test]
+    fn can_analyze_victor_banner() {
+        let image = get_image("02-10-17 16;18");
+        let victor_banner = VictorBanner::from(&image);
+        let analyzed_victor_banner = AnalyzedVictorBanner::from(&victor_banner);
+
+        assert_eq!(victor_banner.image.width(), analyzed_victor_banner.image.width());
+        assert_eq!(victor_banner.image.height(), analyzed_victor_banner.image.height());
+
+        let invalid_count = analyzed_victor_banner.image.pixels().filter_count(|&p| p == AnalyzedBannerPixel::Invalid);
+        assert_eq!(0, invalid_count);
     }
 
     fn assert_expected_white_color(filename: &str, expected_white: RGB<u8>) {
