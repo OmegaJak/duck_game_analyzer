@@ -1,6 +1,5 @@
-
 use imgref::{Img, ImgRef, ImgVec};
-use lodepng::{RGB};
+use lodepng::RGB;
 
 use super::image_sections::victor_banner::VictorBanner;
 
@@ -15,6 +14,15 @@ enum AnalyzedBannerPixel {
     Black
 }
 
+
+
+fn coordinates<T>(image: ImgRef<T>) -> impl Iterator<Item = (usize, usize)> {
+    let ys = 0..image.height();
+    let width = image.width();
+
+    ys.flat_map(move |y| std::iter::repeat(y).zip(0..width)).map(|(y, x)| (x, y))
+}
+
 impl AnalyzedVictorBanner {
     pub fn from(victor_banner: &VictorBanner) -> Self {
         let width = victor_banner.image.width();
@@ -24,11 +32,9 @@ impl AnalyzedVictorBanner {
 
         let analyzed_pixels: Vec<AnalyzedBannerPixel> = vec![AnalyzedBannerPixel::Invalid; width * height];
         let mut analyzed_image = Img::new(analyzed_pixels, width, height);
-        for x in 0..width {
-            for y in 0..height {
-                let analyzed_pixel = Self::analyze_pixel(victor_banner.image, x, y, banner_white, banner_black);
-                analyzed_image[(x, y)] = analyzed_pixel;
-            }
+        for (x, y) in coordinates(victor_banner.image) {
+            let analyzed_pixel = Self::analyze_pixel(victor_banner.image, x, y, banner_white, banner_black);
+            analyzed_image[(x, y)] = analyzed_pixel;
         }
 
         AnalyzedVictorBanner { image: analyzed_image }
@@ -63,6 +69,18 @@ impl AnalyzedVictorBanner {
         let pixel = image[(x as usize, y as usize)];
         pixel == white || pixel == black
     }
+
+    fn matches(&self, other: &AnalyzedVictorBanner) -> bool {
+        for coordinate in coordinates(self.image.as_ref()) {
+            match (self.image[coordinate], other.image[coordinate]) {
+                (AnalyzedBannerPixel::Invalid, _) | (_, AnalyzedBannerPixel::Invalid) => { }
+                (self_pixel, other_pixel) if self_pixel != other_pixel => { return false }
+                _ => { }
+            }
+        }
+
+        true
+    }
 }
 
 #[cfg(test)]
@@ -70,6 +88,7 @@ mod tests {
     use super::*;
     use crate::{constants::*, test_helpers::*};
     use crate::iter_ext::IterExt;
+    use ntest::*;
 
     #[test]
     fn can_analyze_pixel() {
@@ -88,8 +107,6 @@ mod tests {
         // assert_eq!(AnalyzedBannerPixel::Invalid, analyze_at(139, 35)); //?????
     }
 
-    
-
     #[test]
     fn can_analyze_victor_banner() {
         let image = get_image("02-10-17 16;18");
@@ -101,5 +118,33 @@ mod tests {
 
         let invalid_count = analyzed_victor_banner.image.pixels().filter_count(|&p| p == AnalyzedBannerPixel::Invalid);
         assert_eq!(0, invalid_count);
+    }
+
+    #[test]
+    fn banner_matches_itself() {
+        let victor_banner = get_analyzed_victor_banner("11-08-19 20;08");
+        assert_true!(victor_banner.matches(&victor_banner));
+    }
+
+    #[test]
+    fn clear_banner_matches_partially_obscured_banner() {
+        let clear_victor_banner = get_analyzed_victor_banner("11-16-19 14;43");
+        let partially_obscured_victor_banner = get_analyzed_victor_banner("11-09-19 19;39");
+
+        assert_true!(clear_victor_banner.matches(&partially_obscured_victor_banner));
+    }
+
+    #[test]
+    fn completely_different_banners_do_not_match() {
+        let omegajak_banner = get_analyzed_victor_banner("11-16-19 14;43");
+        let tewny_banner = get_analyzed_victor_banner("11-08-19 19;40");
+
+        assert_false!(omegajak_banner.matches(&tewny_banner));
+    }
+
+    fn get_analyzed_victor_banner(filename_date: &str) -> AnalyzedVictorBanner {
+        let image = get_image("02-10-17 16;18");
+        let victor_banner = VictorBanner::from(&image);
+        AnalyzedVictorBanner::from(&victor_banner)
     }
 }
